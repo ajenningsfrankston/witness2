@@ -1,0 +1,552 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ARC-AGI-3 Witness Games</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { background: #1a1a2e; color: #eee; font-family: 'Courier New', monospace; display: flex; flex-direction: column; align-items: center; min-height: 100vh; }
+  h1 { margin: 20px 0 10px; font-size: 1.5em; color: #e94560; }
+  .info { color: #888; margin-bottom: 15px; font-size: 0.85em; }
+  #game-select { margin-bottom: 15px; }
+  #game-select button { background: #16213e; color: #eee; border: 1px solid #e94560; padding: 8px 16px; margin: 0 5px; cursor: pointer; font-family: inherit; border-radius: 4px; }
+  #game-select button:hover, #game-select button.active { background: #e94560; }
+  canvas { border: 2px solid #e94560; image-rendering: pixelated; }
+  #status { margin: 15px 0; font-size: 1.1em; min-height: 1.5em; }
+  #controls { display: flex; gap: 20px; margin: 10px 0; }
+  .key-group { text-align: center; }
+  .key-row { display: flex; justify-content: center; gap: 4px; margin: 2px 0; }
+  .key { background: #16213e; border: 1px solid #555; padding: 6px 12px; border-radius: 4px; font-size: 0.9em; min-width: 36px; }
+  .key.active { background: #e94560; border-color: #e94560; }
+  #log { width: 520px; max-height: 120px; overflow-y: auto; background: #0f0f23; border: 1px solid #333; padding: 8px; font-size: 0.75em; color: #666; margin-top: 10px; border-radius: 4px; }
+  #log div { margin: 1px 0; }
+  #log .ok { color: #4fcc30; }
+  #log .err { color: #f93c31; }
+  #log .info { color: #88d8f1; }
+  /* Teaching mode styles */
+  #teaching-bar { width: 520px; margin: 10px 0; display: flex; gap: 8px; align-items: center; }
+  #teaching-bar label { color: #e94560; font-size: 0.9em; cursor: pointer; }
+  #teaching-bar .toggle { position: relative; width: 40px; height: 20px; }
+  #teaching-bar .toggle input { opacity: 0; width: 0; height: 0; }
+  #teaching-bar .toggle .slider { position: absolute; inset: 0; background: #333; border-radius: 10px; cursor: pointer; transition: 0.3s; }
+  #teaching-bar .toggle .slider::before { content: ''; position: absolute; width: 16px; height: 16px; left: 2px; bottom: 2px; background: #eee; border-radius: 50%; transition: 0.3s; }
+  #teaching-bar .toggle input:checked + .slider { background: #e94560; }
+  #teaching-bar .toggle input:checked + .slider::before { transform: translateX(20px); }
+  #reasoning-input { flex: 1; background: #16213e; color: #eee; border: 1px solid #555; padding: 6px 10px; font-family: inherit; font-size: 0.85em; border-radius: 4px; display: none; }
+  #reasoning-input:focus { border-color: #e94560; outline: none; }
+  #teaching-status { color: #888; font-size: 0.8em; }
+  /* Outcome dialog */
+  #outcome-overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.7); z-index: 100; justify-content: center; align-items: center; }
+  #outcome-dialog { background: #1a1a2e; border: 2px solid #e94560; border-radius: 8px; padding: 20px; width: 400px; max-height: 80vh; overflow-y: auto; }
+  #outcome-dialog h3 { color: #e94560; margin-bottom: 12px; }
+  #outcome-dialog label { color: #aaa; font-size: 0.85em; display: block; margin: 8px 0 4px; }
+  #outcome-dialog textarea, #outcome-dialog select { width: 100%; background: #16213e; color: #eee; border: 1px solid #555; padding: 6px; font-family: inherit; border-radius: 4px; }
+  #outcome-dialog textarea { min-height: 60px; resize: vertical; }
+  #outcome-dialog button { background: #e94560; color: #fff; border: none; padding: 8px 20px; margin-top: 12px; cursor: pointer; border-radius: 4px; font-family: inherit; }
+  #outcome-dialog button:hover { background: #c73a52; }
+</style>
+</head>
+<body>
+
+<h1>ARC-AGI-3 Witness Games</h1>
+<div class="info">Arrow keys = move | Space = confirm/submit | R = reset</div>
+<div id="game-select"></div>
+<canvas id="game" width="512" height="512"></canvas>
+<div id="status">Select a game to start</div>
+<div id="controls">
+  <div class="key-group">
+    <div class="key-row"><span class="key" id="k-up">&uarr; UP</span></div>
+    <div class="key-row">
+      <span class="key" id="k-left">&larr;</span>
+      <span class="key" id="k-down">&darr;</span>
+      <span class="key" id="k-right">&rarr;</span>
+    </div>
+  </div>
+  <div class="key-group" style="display:flex;align-items:center;gap:8px;">
+    <span class="key" id="k-space">Space (confirm)</span>
+    <span class="key" id="k-r">R (reset)</span>
+  </div>
+</div>
+<div id="teaching-bar">
+  <label class="toggle"><input type="checkbox" id="teaching-toggle"><span class="slider"></span></label>
+  <label for="teaching-toggle">Teaching Mode</label>
+  <input type="text" id="reasoning-input" placeholder="Why this action? (Enter to confirm, then press action key)">
+  <span id="teaching-status"></span>
+</div>
+<div id="log"></div>
+
+<!-- Outcome annotation dialog -->
+<div id="outcome-overlay">
+  <div id="outcome-dialog">
+    <h3>Level Complete — Annotate</h3>
+    <label>Key Insights (one per line)</label>
+    <textarea id="outcome-insights" placeholder="What did you learn about this level?"></textarea>
+    <label>Rules Discovered (one per line)</label>
+    <textarea id="outcome-rules" placeholder="Any rules you figured out?"></textarea>
+    <label>Difficulty (1=trivial, 5=very hard)</label>
+    <select id="outcome-difficulty">
+      <option value="1">1 — Trivial</option>
+      <option value="2">2 — Easy</option>
+      <option value="3" selected>3 — Medium</option>
+      <option value="4">4 — Hard</option>
+      <option value="5">5 — Very Hard</option>
+    </select>
+    <button onclick="submitOutcome()">Save &amp; Continue</button>
+  </div>
+</div>
+
+<script>
+const COLORS = {
+  0:[255,255,255], 1:[204,204,204], 2:[153,153,153], 3:[102,102,102],
+  4:[51,51,51], 5:[0,0,0], 6:[229,58,163], 7:[255,123,204],
+  8:[249,60,49], 9:[30,147,255], 10:[136,216,241], 11:[255,220,0],
+  12:[255,133,27], 13:[146,18,49], 14:[79,204,48], 15:[163,86,214]
+};
+const SCALE = 8;
+const canvas = document.getElementById('game');
+const ctx = canvas.getContext('2d');
+const statusEl = document.getElementById('status');
+const logEl = document.getElementById('log');
+const selectEl = document.getElementById('game-select');
+
+let cardId = null;
+let currentGameId = null;
+let guid = null;
+let busy = false;
+let actionCount = 0;
+let levelPaused = false;      // true during 3s completion pause
+
+// Validation tracking
+let levelStatuses = {};       // {level_index: {validated, ...}}
+let currentLevelActions = []; // action IDs for current level
+let lastLevelsCompleted = 0;  // track level completion
+let totalWinLevels = 0;       // total levels in current game
+
+// Teaching mode state
+let teachingMode = false;
+let pendingReasoning = '';
+let teachingEpisodeId = null;
+let teachingStepIndex = 0;
+let pendingOutcomeData = null;  // stores data while outcome dialog is open
+
+// ACTION name → action ID mapping
+const ACTION_ID = { ACTION1: 1, ACTION2: 2, ACTION3: 3, ACTION4: 4, ACTION5: 5 };
+
+function log(msg, cls='') {
+  const d = document.createElement('div');
+  d.className = cls;
+  d.textContent = `[${new Date().toLocaleTimeString()}] ${msg}`;
+  logEl.appendChild(d);
+  logEl.scrollTop = logEl.scrollHeight;
+}
+
+function renderFrame(frames) {
+  if (!frames || frames.length === 0) return;
+  const f = frames[frames.length - 1]; // last frame
+  const img = ctx.createImageData(64*SCALE, 64*SCALE);
+  for (let y = 0; y < 64; y++) {
+    for (let x = 0; x < 64; x++) {
+      const val = f[y][x];
+      const [r, g, b] = COLORS[val] || [0,0,0];
+      for (let dy = 0; dy < SCALE; dy++) {
+        for (let dx = 0; dx < SCALE; dx++) {
+          const idx = ((y*SCALE+dy)*64*SCALE + (x*SCALE+dx)) * 4;
+          img.data[idx] = r; img.data[idx+1] = g; img.data[idx+2] = b; img.data[idx+3] = 255;
+        }
+      }
+    }
+  }
+  ctx.putImageData(img, 0, 0);
+}
+
+async function sendAction(action) {
+  if (busy || levelPaused || !currentGameId) return;
+  busy = true;
+
+  const body = { game_id: currentGameId };
+  if (cardId) body.card_id = cardId;
+  if (guid) body.guid = guid;
+  if (action === 'RESET') {
+    // RESET generates a new guid
+    delete body.guid;
+    currentLevelActions = [];
+  }
+
+  try {
+    const res = await fetch(`/api/cmd/${action}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-API-Key': '1234' },
+      body: JSON.stringify(body),
+    });
+    const data = await res.json();
+
+    if (data.error) {
+      log(`Error: ${data.message}`, 'err');
+      busy = false;
+      return;
+    }
+
+    // Update guid from response
+    if (data.guid) guid = data.guid;
+
+    // Track action for validation
+    if (action !== 'RESET' && ACTION_ID[action]) {
+      currentLevelActions.push(ACTION_ID[action]);
+      // Teaching mode: record step with reasoning
+      if (teachingMode && teachingEpisodeId) {
+        recordTeachingStep(ACTION_ID[action], pendingReasoning);
+        pendingReasoning = '';
+        const inp = document.getElementById('reasoning-input');
+        if (inp) inp.value = '';
+      }
+    }
+
+    // Status
+    const lc = data.levels_completed ?? 0;
+    const wl = data.win_levels ?? '?';
+    const state = data.state ?? '';
+    if (action !== 'RESET') actionCount++;
+    if (wl !== '?') totalWinLevels = wl;
+
+    // Current level number (1-indexed): level being played = lc + 1
+    const currentLevelNum = Math.min(lc + 1, totalWinLevels || lc + 1);
+
+    // Check if current level is unvalidated
+    const nextLvStatus = levelStatuses[lc] || {};
+    const unverifiedTag = (nextLvStatus.validated === false) ? ' [UNVERIFIED]' : '';
+
+    // Detect level completion
+    if (lc > lastLevelsCompleted) {
+      const completedIdx = lastLevelsCompleted;
+      const completedLevelNum = completedIdx + 1;
+      const completedStatus = levelStatuses[completedIdx];
+      if (completedStatus && !completedStatus.validated) {
+        autoValidateLevel(completedIdx, currentLevelActions.slice());
+      }
+      // Teaching mode: show outcome dialog before advancing
+      if (teachingMode && teachingEpisodeId) {
+        pendingOutcomeData = {
+          game_id: currentGameId,
+          level_index: completedIdx,
+          completed: true,
+          total_steps: currentLevelActions.length,
+        };
+        showOutcomeDialog();
+      }
+      currentLevelActions = [];
+      lastLevelsCompleted = lc;
+
+      // DON'T render the new frame yet — keep canvas showing the completed level
+      // (the engine already advanced, so data.frame is the next level)
+
+      if (state === 'WIN') {
+        statusEl.textContent = `${currentGameId} | Level ${completedLevelNum}/${totalWinLevels} | COMPLETE — ALL LEVELS FINISHED!`;
+        statusEl.style.color = '#4fcc30';
+        log('ALL LEVELS COMPLETE!', 'ok');
+      } else {
+        // Freeze on completed level with countdown
+        const pendingFrame = data.frame;
+        levelPaused = true;
+        busy = false;
+        let countdown = 3;
+        statusEl.style.color = '#4fcc30';
+        statusEl.textContent = `${currentGameId} | Level ${completedLevelNum}/${totalWinLevels} | COMPLETE — next level in ${countdown}s`;
+        log(`Level ${completedLevelNum} COMPLETE! (${actionCount} actions)`, 'ok');
+
+        const timer = setInterval(() => {
+          countdown--;
+          if (countdown > 0) {
+            statusEl.textContent = `${currentGameId} | Level ${completedLevelNum}/${totalWinLevels} | COMPLETE — next level in ${countdown}s`;
+          } else {
+            clearInterval(timer);
+            // Now show the next level
+            if (pendingFrame) renderFrame(pendingFrame);
+            levelPaused = false;
+            statusEl.style.color = '';
+            statusEl.textContent = `${currentGameId} | Level: ${lc + 1}/${totalWinLevels} | Actions: ${actionCount} | NOT_FINISHED${unverifiedTag}`;
+          }
+        }, 1000);
+        return;  // skip normal render & status
+      }
+    } else {
+      // Normal action — render immediately
+      if (data.frame) renderFrame(data.frame);
+      statusEl.style.color = '';
+      statusEl.textContent = `${currentGameId} | Level: ${currentLevelNum}/${totalWinLevels || '?'} | Actions: ${actionCount} | ${state}${unverifiedTag}`;
+    }
+    log(`${action} → level=${currentLevelNum} state=${state}`);
+
+  } catch(e) {
+    log(`Fetch error: ${e.message}`, 'err');
+  }
+  busy = false;
+}
+
+async function fetchLevelStatus(gameId) {
+  try {
+    const res = await fetch(`/api/custom/level_status/${gameId}`);
+    const data = await res.json();
+    if (data.levels) {
+      levelStatuses = {};
+      for (const lv of data.levels) {
+        levelStatuses[lv.level_index] = lv;
+      }
+      const uv = data.unvalidated_count || 0;
+      if (uv > 0) {
+        log(`${gameId}: ${data.validated_count} validated, ${uv} unvalidated levels`, 'info');
+      }
+    }
+  } catch(e) {
+    log(`Failed to fetch level status: ${e.message}`, 'err');
+  }
+}
+
+async function autoValidateLevel(levelIdx, actions) {
+  try {
+    const res = await fetch('/api/custom/validate_level', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        game_id: currentGameId,
+        level_index: levelIdx,
+        actions: actions,
+        moves: actions.length > 0 ? actions.length - 1 : 0,  // -1 for CONFIRM
+      }),
+    });
+    const data = await res.json();
+    if (data.status === 'validated') {
+      log(`Level ${levelIdx} VALIDATED! moves=${data.moves}, baseline=${data.baseline}`, 'ok');
+      levelStatuses[levelIdx] = { ...levelStatuses[levelIdx], validated: true };
+    } else if (data.status === 'already_validated') {
+      log(`Level ${levelIdx} was already validated`, 'info');
+    }
+  } catch(e) {
+    log(`Failed to validate level ${levelIdx}: ${e.message}`, 'err');
+  }
+}
+
+async function loadGames() {
+  try {
+    const res = await fetch('/api/games');
+    const games = await res.json();
+    games.sort((a, b) => a.game_id.localeCompare(b.game_id, undefined, { numeric: true }));
+    selectEl.innerHTML = '';
+    for (const g of games) {
+      const btn = document.createElement('button');
+      btn.textContent = `${g.game_id}`;
+      btn.title = g.title || g.game_id;
+      btn.onclick = () => startGame(g.game_id, btn);
+      selectEl.appendChild(btn);
+    }
+    log(`Loaded ${games.length} games`, 'info');
+  } catch(e) {
+    log(`Failed to load games: ${e.message}`, 'err');
+  }
+}
+
+async function startGame(gameId, btn) {
+  // Open scorecard if needed
+  if (!cardId) {
+    try {
+      const res = await fetch('/api/scorecard/open', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-API-Key': '1234' },
+        body: JSON.stringify({ tags: ['human'] }),
+      });
+      const data = await res.json();
+      if (data.card_id) {
+        cardId = data.card_id;
+        log(`Scorecard opened: ${cardId.slice(0,8)}...`, 'info');
+      }
+    } catch(e) {
+      log(`Failed to open scorecard: ${e.message}`, 'err');
+    }
+  }
+
+  currentGameId = gameId;
+  guid = null;
+  actionCount = 0;
+  lastLevelsCompleted = 0;
+  currentLevelActions = [];
+  levelStatuses = {};
+  totalWinLevels = 0;
+  levelPaused = false;
+  statusEl.style.color = '';
+  document.querySelectorAll('#game-select button').forEach(b => b.classList.remove('active'));
+  if (btn) btn.classList.add('active');
+  log(`Starting ${gameId}...`, 'info');
+  statusEl.textContent = `Loading ${gameId}...`;
+  await fetchLevelStatus(gameId);
+  await sendAction('RESET');
+}
+
+const KEY_MAP = {
+  'ArrowUp':    ['ACTION1', 'k-up'],
+  'ArrowDown':  ['ACTION2', 'k-down'],
+  'ArrowLeft':  ['ACTION3', 'k-left'],
+  'ArrowRight': ['ACTION4', 'k-right'],
+  ' ':          ['ACTION5', 'k-space'],
+  'r':          ['RESET',   'k-r'],
+  'R':          ['RESET',   'k-r'],
+};
+
+document.addEventListener('keydown', (e) => {
+  const m = KEY_MAP[e.key];
+  if (!m) return;
+  e.preventDefault();
+  document.getElementById(m[1])?.classList.add('active');
+  sendAction(m[0]);
+});
+document.addEventListener('keyup', (e) => {
+  const m = KEY_MAP[e.key];
+  if (!m) return;
+  document.getElementById(m[1])?.classList.remove('active');
+});
+
+// Show cover image on canvas before any game is selected
+function showCover() {
+  const img = new Image();
+  img.onload = () => {
+    // Draw image scaled to fill the canvas (512x512)
+    ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+  };
+  img.src = '/static/images/cover.jpg';
+}
+showCover();
+
+loadGames();
+
+// ── Teaching Mode ──────────────────────────────────────
+
+document.getElementById('teaching-toggle').addEventListener('change', function() {
+  teachingMode = this.checked;
+  const inp = document.getElementById('reasoning-input');
+  const statusEl2 = document.getElementById('teaching-status');
+  if (teachingMode) {
+    inp.style.display = 'block';
+    statusEl2.textContent = 'Teaching ON';
+    statusEl2.style.color = '#4fcc30';
+    log('Teaching mode enabled — type reasoning before each action', 'info');
+    // Auto-start episode if game is active
+    if (currentGameId) {
+      startTeachingEpisode(currentGameId, lastLevelsCompleted);
+    }
+  } else {
+    inp.style.display = 'none';
+    statusEl2.textContent = '';
+    log('Teaching mode disabled', 'info');
+    // Finish active episode
+    if (teachingEpisodeId) {
+      finishTeachingEpisode(null);
+    }
+  }
+});
+
+// Capture reasoning from input (Enter key stores it, action key sends it)
+document.getElementById('reasoning-input').addEventListener('keydown', function(e) {
+  if (e.key === 'Enter') {
+    e.preventDefault();
+    pendingReasoning = this.value;
+    const statusEl2 = document.getElementById('teaching-status');
+    statusEl2.textContent = pendingReasoning ? 'Reasoning set ✓' : '';
+    statusEl2.style.color = '#4fcc30';
+  }
+  // Don't propagate arrow keys from the input to the game
+  if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', ' '].includes(e.key)) {
+    e.stopPropagation();
+  }
+});
+
+async function startTeachingEpisode(gameId, levelIndex) {
+  try {
+    const res = await fetch('/api/teaching/start_episode', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ game_id: gameId, level_index: levelIndex }),
+    });
+    const data = await res.json();
+    teachingEpisodeId = data.episode_id;
+    teachingStepIndex = 0;
+    log(`Teaching episode started: ${data.episode_id}`, 'info');
+  } catch(e) {
+    log(`Failed to start teaching episode: ${e.message}`, 'err');
+  }
+}
+
+async function recordTeachingStep(actionId, reasoning) {
+  if (!teachingEpisodeId) return;
+  try {
+    await fetch('/api/teaching/step', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        step_index: teachingStepIndex++,
+        frame_hash: '',  // server-side hashing would be ideal
+        action: actionId,
+        reasoning: reasoning || '',
+        confidence: 0.7,
+      }),
+    });
+  } catch(e) {
+    log(`Failed to record teaching step: ${e.message}`, 'err');
+  }
+}
+
+async function finishTeachingEpisode(outcome) {
+  if (!teachingEpisodeId) return;
+  try {
+    const body = outcome || {
+      game_id: currentGameId || '',
+      level_index: 0,
+      completed: false,
+      total_steps: teachingStepIndex,
+    };
+    const res = await fetch('/api/teaching/outcome', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    const data = await res.json();
+    log(`Teaching episode finished: ${data.episode_id} (${data.steps} steps)`, 'ok');
+    teachingEpisodeId = null;
+    teachingStepIndex = 0;
+  } catch(e) {
+    log(`Failed to finish teaching episode: ${e.message}`, 'err');
+  }
+}
+
+function showOutcomeDialog() {
+  document.getElementById('outcome-overlay').style.display = 'flex';
+  document.getElementById('outcome-insights').value = '';
+  document.getElementById('outcome-rules').value = '';
+  document.getElementById('outcome-difficulty').value = '3';
+}
+
+async function submitOutcome() {
+  const insights = document.getElementById('outcome-insights').value
+    .split('\n').map(s => s.trim()).filter(s => s);
+  const rules = document.getElementById('outcome-rules').value
+    .split('\n').map(s => s.trim()).filter(s => s);
+  const difficulty = parseInt(document.getElementById('outcome-difficulty').value) || 3;
+
+  document.getElementById('outcome-overlay').style.display = 'none';
+
+  if (pendingOutcomeData && teachingEpisodeId) {
+    const outcome = {
+      ...pendingOutcomeData,
+      key_insights: insights,
+      rules_discovered: rules,
+      difficulty_rating: difficulty,
+    };
+    await finishTeachingEpisode(outcome);
+    // Start new episode for next level
+    if (currentGameId) {
+      startTeachingEpisode(currentGameId, pendingOutcomeData.level_index + 1);
+    }
+  }
+  pendingOutcomeData = null;
+}
+</script>
+</body>
+</html>

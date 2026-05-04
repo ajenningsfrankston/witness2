@@ -1,0 +1,39 @@
+{
+    "game_id": "tw04",
+    "title": "SymDraw - 对称画线",
+    "class_name": "Tw04",
+    "tags": [
+        "witness",
+        "symmetry",
+        "dual-control"
+    ],
+    "baseline_actions": [
+        6,
+        6,
+        8,
+        8,
+        9,
+        9,
+        10,
+        10,
+        12,
+        12,
+        15,
+        15,
+        16,
+        16,
+        17,
+        17,
+        18,
+        20,
+        28,
+        39,
+        11,
+        14,
+        17,
+        20,
+        20,
+        23
+    ],
+    "date_downloaded": "2026-03-05T00:00:00Z"
+}
