@@ -1,5 +1,5 @@
 
-```python
+
 import numpy as np
 import cv2
 from typing import List, Tuple, Dict, Set, Optional
@@ -431,10 +431,6 @@ def integrate_with_env():
 
         # ... execute action ...
         obs = env.step(action)
-    """)
+        """)
 
 
-if __name__ == "__main__":
-    demo_detection()
-    integrate_with_env()
-```
