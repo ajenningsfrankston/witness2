@@ -1,13 +1,8 @@
 
 
 import numpy as np
-import cv2
 from typing import List, Tuple, Dict, Set, Optional
-from dataclasses import dataclass
-from collections import defaultdict
-import torch
-import torch.nn as nn
-import torch.nn.functional as F
+
 
 # ============================================
 # ARC-AGI-3 Color Palette (0-15)
@@ -167,138 +162,6 @@ class TraditionalObjectDetector:
         return centroids
 
 
-# ============================================
-# DEEP LEARNING DETECTOR (CNN)
-# ============================================
-
-class SimpleObjectCNN(nn.Module):
-    """
-    Simple CNN for detecting objects in ARC-AGI-3 frames.
-    This approach learns to recognize patterns without explicit color rules.
-    """
-
-    def __init__(self, num_classes: int = 5):
-        super().__init__()
-        self.num_classes = num_classes
-
-        # Convolutional layers
-        self.conv1 = nn.Conv2d(1, 32, kernel_size=3, padding=1)
-        self.conv2 = nn.Conv2d(32, 64, kernel_size=3, padding=1)
-        self.conv3 = nn.Conv2d(64, 128, kernel_size=3, padding=1)
-
-        # Pooling
-        self.pool = nn.MaxPool2d(2, 2)
-
-        # Fully connected layers
-        self.fc1 = nn.Linear(128 * 8 * 8, 256)
-        self.fc2 = nn.Linear(256, 128)
-        self.fc3 = nn.Linear(128, num_classes)
-
-        self.dropout = nn.Dropout(0.3)
-
-    def forward(self, x):
-        # Input: (batch, 1, 64, 64)
-        x = self.pool(F.relu(self.conv1(x)))   # 64->32
-        x = self.pool(F.relu(self.conv2(x)))   # 32->16
-        x = self.pool(F.relu(self.conv3(x)))   # 16->8
-
-        x = x.view(-1, 128 * 8 * 8)
-        x = F.relu(self.fc1(x))
-        x = self.dropout(x)
-        x = F.relu(self.fc2(x))
-        x = self.fc3(x)
-
-        return x
-
-
-class CNNObjectDetector:
-    """
-    Wrapper for CNN-based object detection.
-    """
-
-    def __init__(self, model_path: Optional[str] = None, num_classes: int = 5):
-        self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-        self.model = SimpleObjectCNN(num_classes).to(self.device)
-
-        if model_path:
-            self.model.load_state_dict(torch.load(model_path, map_location=self.device))
-
-        self.model.eval()
-
-    def detect_objects(self, frame: np.ndarray) -> Dict[str, List[Tuple[int, int]]]:
-        """
-        Detect objects using sliding window approach.
-        """
-        # Convert to tensor
-        frame_tensor = torch.from_numpy(frame).float().unsqueeze(0).unsqueeze(0)
-        frame_tensor = frame_tensor.to(self.device)
-
-        # Sliding window detection
-        window_size = 16
-        stride = 8
-        detections = defaultdict(list)
-
-        for y in range(0, 64 - window_size + 1, stride):
-            for x in range(0, 64 - window_size + 1, stride):
-                window = frame_tensor[:, :, y: y +window_size, x: x +window_size]
-
-                with torch.no_grad():
-                    logits = self.model(window)
-                    probs = F.softmax(logits, dim=1)
-
-                    max_prob, pred_class = torch.max(probs, 1)
-
-                    if max_prob > 0.7:  # Confidence threshold
-                        center_x = x + window_size // 2
-                        center_y = y + window_size // 2
-                        detections[pred_class.item()].append((center_x, center_y))
-
-        # Convert to human-readable names (mapping depends on training)
-        object_map = {0: 'agent', 1: 'waypoint', 2: 'goal', 3: 'obstacle', 4: 'path'}
-
-        result = {}
-        for class_id, positions in detections.items():
-            key = object_map.get(class_id, f'class_{class_id}')
-            result[key] = positions
-
-        return result
-
-
-# ============================================
-# HYBRID DETECTOR (Best of Both Worlds)
-# ============================================
-
-class HybridObjectDetector:
-    """
-    Combines color-based detection with the CNN for maximum accuracy.
-    """
-
-    def __init__(self, cnn_model_path: Optional[str] = None):
-        self.color_detector = TraditionalObjectDetector()
-        self.cnn_detector = CNNObjectDetector(cnn_model_path) if cnn_model_path else None
-
-    def detect_objects(self, frame: np.ndarray) -> Dict[str, List[Tuple[int, int]]]:
-        """
-        Detect objects using both methods and merge results.
-        """
-        # Get color-based detections (fast and accurate for standard colors)
-        color_detections = self.color_detector.detect_objects(frame)
-
-        # If CNN is available, use it for ambiguous cases
-        if self.cnn_detector:
-            cnn_detections = self.cnn_detector.detect_objects(frame)
-
-            # Merge: prefer color detections for standard objects,
-            # but use CNN for things that might have variable colors
-            merged = color_detections.copy()
-            for obj_type, positions in cnn_detections.items():
-                if obj_type not in merged or not merged[obj_type]:
-                    merged[obj_type] = positions
-
-            return merged
-
-        return color_detections
-
 
 # ============================================
 # INTEGRATION WITH ARC-AGI-3 ENVIRONMENT
@@ -309,8 +172,8 @@ class ARCObservationParser:
     Parse ARC-AGI-3 environment observations into structured game state.
     """
 
-    def __init__(self, use_cnn: bool = False, cnn_model_path: Optional[str] = None):
-        self.detector = HybridObjectDetector(cnn_model_path) if use_cnn else TraditionalObjectDetector()
+    def __init__(self, use_cnn: bool = False):
+        self.detector = TraditionalObjectDetector()
 
     def parse_observation(self, obs) -> Dict:
         """
@@ -377,7 +240,7 @@ def demo_detection():
     frame[15, 10] = ARCColor.WHITE      # Agent
     frame[25:30, 40:45] = ARCColor.CYAN # Path
 
-    # Initialize detector
+    # Initialise detector
     detector = TraditionalObjectDetector()
 
     # Detect objects
@@ -432,5 +295,7 @@ def integrate_with_env():
         # ... execute action ...
         obs = env.step(action)
         """)
+
+demo_detection()
 
 
